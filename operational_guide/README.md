@@ -7,7 +7,7 @@
 - [ ] Upgrading M3
 - [ ] Resource Limits and Preventing Abusive Reads/Writes
 - [ ] Tuning Availability, Consistency, and Durability
-- [ ] Placement
+- [x] Placement
 - [ ] Placement Configuration
 - [ ] Namespace Configuration
 - [ ] Bootstrapping & Crash Recovery
