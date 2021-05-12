@@ -8,7 +8,7 @@
 
 ### 启动M3DB
 ```shell
-docker run -p 7201:7201 -p 7203:7203 --name m3db -v $(pwd)/m3db_data:/var/lib/m3db quay.io/m3db/m3dbnode:v1.0.0
+docker run  -p 7201:7201 -p 7203:7203 --name m3db  -d -v $(pwd)/m3db_data:/var/lib/m3db quay.io/m3db/m3dbnode:v1.0.0
 ```
 
 ### 配置文件
