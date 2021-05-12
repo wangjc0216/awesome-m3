@@ -41,45 +41,73 @@ http -v POST http://10.0.0.199:7201/api/v1/database/create type=local namespaceN
 curl http://localhost:7201/api/v1/services/m3db/placement | jq .
 
 ```
-//todo Read more about the bootstrapping process
+在创建namespace的时候，M3DB会打印一些关于`Bootstrap`的引导日志。
+
+#### 设置namespace为就绪状态
+
+一旦namespace已经完成引导，需要手动去调用Ready接口：
+```shell
+http -v POST http://10.0.0.199:7201/api/v1/services/m3db/namespace/ready  name=default
+```
+
+#### 查看namesapce的细节
+
+就可以看到该namespace的状态(包括上一个请求更新的Ready状态)
+```
+curl http://localhost:7201/api/v1/services/m3db/namespace | jq .
+```
+
+## Writing and Querying Metrics
+
+M3支持写入Prometheus和statsd数据。但是从官网来看，支持Prometheus是主要重点。
+插入数据的类型有两种，分别为protobuf和json格式，后者主要用于测试，性能方面不如前者(前者将数据压缩，肯定前者好呀)，不建议在生产上使用。
+
+json数据写入的配置：
+```shell
+curl -X POST http://localhost:7201/api/v1/json/write -d '{
+  "tags": 
+    {
+      "__name__": "third_avenue",
+      "city": "new_york",
+      "checkout": "1"
+    },
+    "timestamp": '\"$(date "+%s")\"',
+    "value": 3347.26
+}'
+```
+prometheus使用M3DB的配置：
+```shell
+global:
+  scrape_interval: 15s
+  scrape_timeout: 15s
+  external_labels:
+    monitor: 'codelab-monitor'
+
+scrape_configs:
+- job_name: cadvisor
+  static_configs:
+  - targets: ['10.0.0.108:8099']
+- job_name: node-exporter
+  static_configs:
+  - targets: ['10.0.0.108:9100']
+- job_name: m3
+  static_configs:
+  - targets:  ['10.0.0.199:7203']
+remote_read:
+  - url: "http://10.0.0.199:7201/api/v1/prom/remote/read"
+    read_recent: true
+
+remote_write:
+  - url: "http://10.0.0.199:7201/api/v1/prom/remote/write"
+```
 
 
-Replication factor: 3
+与Promethues的查询API类似，调用M3DB进行查询：
+```shell
+curl -X "POST" -G "http://localhost:7201/api/v1/query_range" \
+  -d "query=rate(node_disk_read_bytes_total[2m])" \
+  -d "start=$(date "+%s" -d "45 minutes ago")" \
+  -d "end=$( date +%s )" \
+  -d "step=1m" | jq .
+```
 
-                                 ┌─────────────────┐          ┌─────────────────┐        ┌─────────────────┐       ┌─────────────────┐
-                                 │     Node A      │          │     Node B      │        │     Node C      │       │     Node D      │
-┌──────────────────────────┬─────┴─────────────────┴─────┬────┴─────────────────┴────┬───┴─────────────────┴───┬───┴─────────────────┴───┐
-│                          │ ┌─────────────────────────┐ │ ┌───────────────────────┐ │ ┌──────────────────────┐│                         │
-│                          │ │                         │ │ │                       │ │ │                      ││                         │
-│                          │ │                         │ │ │                       │ │ │                      ││                         │
-│                          │ │   Shard 1: Available    │ │ │  Shard 1: Available   │ │ │  Shard 1: Available  ││                         │
-│  1) Initial Placement    │ │   Shard 2: Available    │ │ │  Shard 2: Available   │ │ │  Shard 2: Available  ││                         │
-│                          │ │   Shard 3: Available    │ │ │  Shard 3: Available   │ │ │  Shard 3: Available  ││                         │
-│                          │ │                         │ │ │                       │ │ │                      ││                         │
-│                          │ │                         │ │ │                       │ │ │                      ││                         │
-│                          │ └─────────────────────────┘ │ └───────────────────────┘ │ └──────────────────────┘│                         │
-├──────────────────────────┼─────────────────────────────┼───────────────────────────┼─────────────────────────┼─────────────────────────┤
-│                          │                             │                           │                         │                         │
-│                          │ ┌─────────────────────────┐ │ ┌───────────────────────┐ │ ┌──────────────────────┐│┌──────────────────────┐ │
-│                          │ │                         │ │ │                       │ │ │                      │││                      │ │
-│                          │ │                         │ │ │                       │ │ │                      │││                      │ │
-│                          │ │    Shard 1: Leaving     │ │ │   Shard 1: Available  │ │ │  Shard 1: Available  │││Shard 1: Initializing │ │
-│   2) Begin Node Add      │ │    Shard 2: Available   │ │ │   Shard 2: Leaving    │ │ │  Shard 2: Available  │││Shard 2: Initializing │ │
-│                          │ │    Shard 3: Available   │ │ │   Shard 3: Available  │ │ │  Shard 3: Leaving    │││Shard 3: Initializing │ │
-│                          │ │                         │ │ │                       │ │ │                      │││                      │ │
-│                          │ │                         │ │ │                       │ │ │                      │││                      │ │
-│                          │ └─────────────────────────┘ │ └───────────────────────┘ │ └──────────────────────┘│└──────────────────────┘ │
-│                          │                             │                           │                         │                         │
-├──────────────────────────┼─────────────────────────────┼───────────────────────────┼─────────────────────────┼─────────────────────────┤
-│                          │                             │                           │                         │                         │
-│                          │ ┌─────────────────────────┐ │ ┌───────────────────────┐ │ ┌──────────────────────┐│┌──────────────────────┐ │
-│                          │ │                         │ │ │                       │ │ │                      │││                      │ │
-│                          │ │                         │ │ │                       │ │ │                      │││                      │ │
-│                          │ │   Shard 2: Available    │ │ │  Shard 1: Available   │ │ │  Shard 1: Available  │││  Shard 1: Available  │ │
-│  3) Complete Node Add    │ │   Shard 3: Available    │ │ │  Shard 3: Available   │ │ │  Shard 2: Available  │││  Shard 2: Available  │ │
-│                          │ │                         │ │ │                       │ │ │                      │││  Shard 3: Available  │ │
-│                          │ │                         │ │ │                       │ │ │                      │││                      │ │
-│                          │ │                         │ │ │                       │ │ │                      │││                      │ │
-│                          │ └─────────────────────────┘ │ └───────────────────────┘ │ └──────────────────────┘│└──────────────────────┘ │
-│                          │                             │                           │                         │                         │
-└──────────────────────────┴─────────────────────────────┴───────────────────────────┴─────────────────────────┴─────────────────────────┘
